@@ -26,7 +26,17 @@ def get_init_image_ids(scene_graph: dict) -> (str, str):
     """
     max_pair = [None, None]  # dummy value
     """ YOUR CODE HERE """
-    
+    max_matches = 0
+    optimal_pair = []
+
+    for img1, connections in scene_graph.items():
+        for img2 in connections:
+            correspondences = load_matches(image_id1=img1, image_id2=img2)
+            current_matches = correspondences.shape[0]
+
+            if current_matches > max_matches:
+                max_matches = current_matches
+                optimal_pair = [img1, img2]
 
 
     """ END YOUR CODE HERE """
@@ -78,7 +88,14 @@ def get_init_extrinsics(image_id1: str, image_id2: str, intrinsics: np.ndarray) 
 
     extrinsics2 = np.zeros(shape=[3, 4], dtype=float)
     """ YOUR CODE HERE """
-    
+    extrinsics1 = np.array([[1, 0, 0, 0],
+                            [0, 1, 0, 0],
+                            [0, 0, 1, 0]])
+
+    # Calculate extrinsic parameters for image_id2
+    recovered_pose = cv2.recoverPose(E=essential_mtx, points1=points2d_1, points2=points2d_2, cameraMatrix=intrinsics)
+    R, t, _ = (recovered_pose[0], recovered_pose[1], recovered_pose[3])
+    extrinsics2 = np.vstack((R, t))
 
 
     """ END YOUR CODE HERE """
@@ -154,7 +171,32 @@ def get_reprojection_residuals(points2d: np.ndarray, points3d: np.ndarray, intri
     """
     residuals = np.zeros(points2d.shape[0])
     """ YOUR CODE HERE """
-   
+    # Create homogeneous 3D points by appending ones to the 3D points
+    homogeneous_3d = np.hstack((points3d, np.ones((points3d.shape[0], 1))))
+
+    # Transpose the homogeneous 3D points for matrix multiplication
+    homogeneous_3d_T = homogeneous_3d.T
+
+    # Form the extrinsic matrix by combining rotation and translation
+    extrinsic_matrix = np.hstack((rotation_mtx, tvec[:, None]))
+
+    # Calculate the projection matrix by multiplying intrinsics with extrinsics
+    projection_matrix = np.dot(intrinsics, extrinsic_matrix)
+
+    # Project 3D points onto 2D using the projection matrix
+    projected_2d = np.dot(projection_matrix, homogeneous_3d_T)
+
+    # Normalize the projected points by dividing by the last coordinate
+    projected_2d /= projected_2d[-1, :]
+
+    # Remove the last row of homogeneous coordinates to get 2D points
+    projected_2d = projected_2d[:-1, :]
+
+    # Transpose back to the original format
+    projected_2d = projected_2d.T
+
+    # Calculate the Euclidean distance between the actual and projected 2D points
+    distances = np.linalg.norm(points2d - projected_2d, axis=1)
 
 
     """ END YOUR CODE HERE """
@@ -202,7 +244,22 @@ def solve_pnp(image_id: str, point2d_idxs: np.ndarray, all_points3d: np.ndarray,
         2. convert the returned rotation vector to rotation matrix using cv2.Rodrigues
         3. compute the reprojection residuals
         """
-       
+        # Solve for pose using PnP algorithm
+        _, rot_vec, trans_vec = cv2.solvePnP(objectPoints=selected_pts3d,
+                                             imagePoints=selected_pts2d,
+                                             cameraMatrix=intrinsics,
+                                             distCoeffs=None,
+                                             flags=cv2.SOLVEPNP_ITERATIVE)
+
+        # Convert rotation vector to rotation matrix
+        rot_mat, _ = cv2.Rodrigues(rot_vec)
+
+        # Compute reprojection residuals
+        residuals = get_reprojection_residuals(points2d=points2d,
+                                               points3d=points3d,
+                                               intrinsics=intrinsics,
+                                               rotation_mtx=rot_mat,
+                                               tvec=trans_vec)
 
 
         """ END YOUR CODE HERE """
@@ -254,7 +311,13 @@ def add_points3d(image_id1: str, image_id2: str, all_extrinsic: dict, intrinsics
     triangulate between the image points for the unregistered matches for image_id1 and image_id2 to get new points3d
     new_points3d = triangulate(..., kp_idxs1=matches[:, 0], kp_idxs2=matches[:, 1], ...)
     """
-    
+    new_points3d = triangulate(image_id1=image_id1,
+                               image_id2=image_id2,
+                               kp_idxs1=matches[:, 0],
+                               kp_idxs2=matches[:, 1],
+                               extrinsics1=all_extrinsic[image_id1],
+                               extrinsics2=all_extrinsic[image_id2],
+                               intrinsics=intrinsics)
 
 
     """ END YOUR CODE HERE """
@@ -285,7 +348,16 @@ def get_next_pair(scene_graph: dict, registered_ids: list):
     """
     max_new_id, max_registered_id, max_num_inliers = None, None, 0
     """ YOUR CODE HERE """
-    
+    for registered_id in registered_ids:
+        neighbors = scene_graph[registered_id]
+        for new_id in neighbors:
+            if new_id not in registered_ids:
+                matches = load_matches(registered_id, new_id)
+                num_inliers = matches.shape[0]
+                if num_inliers > max_num_inliers:
+                    max_num_inliers = num_inliers
+                    max_new_id = new_id
+                    max_registered_id = registered_id
 
 
     
